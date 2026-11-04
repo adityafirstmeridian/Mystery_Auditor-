@@ -1,0 +1,6 @@
+{
+  "name": "Mystery Auditor Onboarding",
+  "description": "Onboarding form for mystery auditors with Aadhar verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
