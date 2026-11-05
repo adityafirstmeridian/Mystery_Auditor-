@@ -7,6 +7,7 @@ function CandidateOnboarding() {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     fullName: "Aarav Sharma", dob: "15-05-1994", address: "42, Residency Road", city: "Bangalore", state: "Karnataka", pin: "560025",
+    houseName: "", area: "", skills: "", preferredLocationList: [] as string[],
     phone: "", email: "", pan: "", qualification: "", experience: "", preferredLocation: "", 
     accountNumber: "", reconfirmAccountNumber: "", ifsc: "", resume: ""
   });
