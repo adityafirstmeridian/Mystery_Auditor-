@@ -1,5 +1,138 @@
 import { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { supabase } from './lib/supabase';
+
+type Candidate = Record<string, any>;
+type Rating = {
+  id: string;
+  candidate_key: string;
+  candidate_name: string;
+  reviewer_name: string;
+  rating: number;
+  feedback: string;
+  created_at: string;
+};
+
+const getCandidateKey = (candidate: Candidate) => String(candidate.phone || candidate.email || candidate.fullName);
+const formatRatingDate = (value: string) => new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+
+function StarRating({ value, onChange, interactive = false }: { value: number; onChange?: (rating: number) => void; interactive?: boolean }) {
+  return (
+    <div className="flex items-center gap-1" aria-label={`${value} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          disabled={!interactive}
+          onClick={() => onChange?.(star)}
+          className={`${interactive ? 'cursor-pointer hover:scale-110' : 'cursor-default'} text-2xl leading-none transition-transform ${star <= value ? 'text-amber-400' : 'text-gray-300'}`}
+          aria-label={`${star} star${star === 1 ? '' : 's'}`}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RatingPanel({ candidate, onClose }: { candidate: Candidate; onClose: () => void }) {
+  const [ratings, setRatings] = useState<Rating[]>([]);
+  const [reviewerName, setReviewerName] = useState('');
+  const [rating, setRating] = useState(0);
+  const [feedback, setFeedback] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const candidateKey = getCandidateKey(candidate);
+
+  const loadRatings = async () => {
+    setLoading(true);
+    const { data, error: loadError } = await supabase
+      .from('candidate_ratings')
+      .select('id, candidate_key, candidate_name, reviewer_name, rating, feedback, created_at')
+      .eq('candidate_key', candidateKey)
+      .order('created_at', { ascending: false });
+    if (loadError) setError('Ratings could not be loaded. Please try again.');
+    else setRatings((data || []) as Rating[]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void loadRatings();
+  }, [candidateKey]);
+
+  const average = ratings.length ? ratings.reduce((sum, item) => sum + item.rating, 0) / ratings.length : 0;
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!reviewerName.trim() || rating === 0) {
+      setError('Please enter your name and select a star rating.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    const { error: saveError } = await supabase.from('candidate_ratings').insert({
+      candidate_key: candidateKey,
+      candidate_name: candidate.fullName || 'Unnamed candidate',
+      reviewer_name: reviewerName.trim(),
+      rating,
+      feedback: feedback.trim(),
+    });
+    if (saveError) setError('Your rating could not be saved. Please try again.');
+    else {
+      setReviewerName('');
+      setRating(0);
+      setFeedback('');
+      await loadRatings();
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-label={`Ratings for ${candidate.fullName}`}>
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-gray-200 p-6">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-teal-700">Candidate feedback</p>
+            <h2 className="mt-1 text-2xl font-bold text-gray-900">{candidate.fullName || 'Unnamed candidate'}</h2>
+            <div className="mt-3 flex items-center gap-3">
+              <StarRating value={Math.round(average)} />
+              <span className="font-semibold text-gray-900">{average ? average.toFixed(1) : '—'} / 5</span>
+              <span className="text-sm text-gray-500">{ratings.length} {ratings.length === 1 ? 'review' : 'reviews'}</span>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-2xl leading-none text-gray-500 hover:bg-gray-100 hover:text-gray-900" aria-label="Close ratings">×</button>
+        </div>
+
+        <div className="space-y-3 p-6">
+          <h3 className="font-semibold text-gray-900">All feedback</h3>
+          {loading ? <p className="text-sm text-gray-500">Loading ratings…</p> : ratings.length === 0 ? <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-500">No ratings yet. Be the first recruiter to review this candidate.</p> : ratings.map((item) => (
+            <div key={item.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-3"><StarRating value={item.rating} /><span className="font-semibold text-gray-900">{item.rating}.0</span></div>
+                <time className="text-sm text-gray-500">{formatRatingDate(item.created_at)}</time>
+              </div>
+              <p className="mt-2 text-sm font-medium text-gray-700">By {item.reviewer_name}</p>
+              {item.feedback && <p className="mt-2 text-sm leading-6 text-gray-600">{item.feedback}</p>}
+            </div>
+          ))}
+        </div>
+
+        <form onSubmit={handleSubmit} className="border-t border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-900">Add your feedback</h3>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <label className="text-sm font-medium text-gray-700">Your name<input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100" placeholder="Recruiter name" maxLength={120} required /></label>
+            <div><span className="text-sm font-medium text-gray-700">Your rating</span><div className="mt-2"><StarRating value={rating} onChange={setRating} interactive /></div></div>
+          </div>
+          <label className="mt-4 block text-sm font-medium text-gray-700">Feedback (optional)<textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} className="mt-1 min-h-24 w-full resize-y rounded-lg border border-gray-300 p-3 font-normal outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100" placeholder="Share your experience with this candidate" maxLength={2000} /></label>
+          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+          <button type="submit" disabled={saving} className="mt-4 rounded-lg bg-teal-700 px-5 py-3 font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60">{saving ? 'Saving…' : 'Submit rating'}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 
 type FormState = 'aadhar' | 'details';
 
@@ -268,7 +401,9 @@ function CandidateOnboarding() {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'candidate' | 'recruiter'>('candidate');
-  const [candidates, setCandidates] = useState<any[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [ratings, setRatings] = useState<Rating[]>([]);
+  const [ratingCandidate, setRatingCandidate] = useState<Candidate | null>(null);
 
   useEffect(() => {
     let hasCandidates = false;
@@ -301,6 +436,25 @@ export default function App() {
     }
     setCandidates(allCandidates);
   };
+
+  useEffect(() => {
+    const loadRatings = async () => {
+      const { data } = await supabase
+        .from('candidate_ratings')
+        .select('id, candidate_key, candidate_name, reviewer_name, rating, feedback, created_at')
+        .order('created_at', { ascending: false });
+      setRatings((data || []) as Rating[]);
+    };
+    void loadRatings();
+  }, []);
+
+  const ratingSummary = ratings.reduce<Record<string, { average: number; count: number }>>((summary, rating) => {
+    const current = summary[rating.candidate_key] || { average: 0, count: 0 };
+    current.average = (current.average * current.count + rating.rating) / (current.count + 1);
+    current.count += 1;
+    summary[rating.candidate_key] = current;
+    return summary;
+  }, {});
 
   const [filters, setFilters] = useState({ keyword: '', minExp: '', maxExp: '', location: '', qualification: '', name: '' });
   const [selectedCandidate, setSelectedCandidate] = useState<any>(null);
@@ -335,7 +489,12 @@ export default function App() {
                     {selectedCandidate.fullName ? selectedCandidate.fullName.split(' ').map((n: string) => n[0]).join('') : '?'}
                 </div>
                 <div>
-                    <h2 className="text-2xl font-bold">{selectedCandidate.fullName}</h2>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="text-2xl font-bold">{selectedCandidate.fullName}</h2>
+                      <button type="button" onClick={() => setRatingCandidate(selectedCandidate)} className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm font-semibold text-gray-900 transition hover:bg-amber-100">
+                        <span className="text-amber-400">★</span> {ratingSummary[getCandidateKey(selectedCandidate)] ? ratingSummary[getCandidateKey(selectedCandidate)].average.toFixed(1) : 'Rate'}
+                      </button>
+                    </div>
                     <div className="flex gap-4 text-sm text-gray-600 mt-1">
                         <span>📍 {selectedCandidate.city || 'N/A'}</span>
                         <span>✉️ {selectedCandidate.email} ✅</span>
@@ -465,7 +624,12 @@ export default function App() {
                   </div>
                   <div className="flex-grow grid grid-cols-2 gap-4">
                     <div>
-                      <h3 className="text-lg font-bold text-gray-900">{c.fullName}</h3>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h3 className="text-lg font-bold text-gray-900">{c.fullName}</h3>
+                        <button type="button" onClick={(event) => { event.stopPropagation(); setRatingCandidate(c); }} className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-sm font-semibold text-gray-900 transition hover:bg-amber-100" aria-label={`View ratings for ${c.fullName}`}>
+                          <span className="text-amber-400">★</span> {ratingSummary[getCandidateKey(c)] ? ratingSummary[getCandidateKey(c)].average.toFixed(1) : 'Rate'} {ratingSummary[getCandidateKey(c)] && <span className="text-xs font-normal text-gray-500">({ratingSummary[getCandidateKey(c)].count})</span>}
+                        </button>
+                      </div>
                       <p className="text-gray-600 flex items-center mt-1">📧 {c.email}</p>
                       <p className="text-gray-600 flex items-center mt-1">📞 {c.phone}</p>
                     </div>
@@ -480,6 +644,7 @@ export default function App() {
           </div>
         </div>
       )}
+      {ratingCandidate && <RatingPanel candidate={ratingCandidate} onClose={() => setRatingCandidate(null)} />}
     </div>
   );
 }
